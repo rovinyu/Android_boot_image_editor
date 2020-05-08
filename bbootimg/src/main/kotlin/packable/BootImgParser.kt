@@ -4,12 +4,13 @@ import avb.AVBInfo
 import avb.blob.Footer
 import cfig.*
 import cfig.bootimg.BootImgInfo
+import cfig.bootimg.Common.Companion.probeHeaderVersion
+import cfig.bootimg.v3.BootV3
 import com.fasterxml.jackson.databind.ObjectMapper
 import de.vandermeer.asciitable.AsciiTable
 import org.slf4j.LoggerFactory
 import java.io.File
 import java.io.FileInputStream
-import java.lang.IllegalArgumentException
 
 @OptIn(ExperimentalUnsignedTypes::class)
 class BootImgParser() : IPackable {
@@ -31,37 +32,53 @@ class BootImgParser() : IPackable {
         }
     }
 
+    private fun parserV2(fileName: String) {
+        val info = Parser().parseBootImgHeader(fileName, avbtool = "aosp/avb/avbtool")
+        InfoTable.instance.addRule()
+        InfoTable.instance.addRow("image info", ParamConfig().cfg)
+        if (info.signatureType == BootImgInfo.VerifyType.AVB) {
+            log.info("continue to analyze vbmeta info in $fileName")
+            Avb().parseVbMeta(fileName)
+            InfoTable.instance.addRule()
+            InfoTable.instance.addRow("AVB info", Avb.getJsonFileName(fileName))
+        }
+        Parser().extractBootImg(fileName, info2 = info)
+        val unpackedVbmeta = unpackVBMeta()
+
+        InfoTable.instance.addRule()
+        val tableHeader = AsciiTable().apply {
+            addRule()
+            addRow("What", "Where")
+            addRule()
+        }
+        log.info("\n\t\t\tUnpack Summary of $fileName\n{}\n{}", tableHeader.render(), InfoTable.instance.render())
+        if (unpackedVbmeta) {
+            val tableFooter = AsciiTable().apply {
+                addRule()
+                addRow("vbmeta.img", Avb.getJsonFileName("vbmeta.img"))
+                addRule()
+            }
+            LoggerFactory.getLogger("vbmeta").info("\n" + tableFooter.render())
+        }
+        log.info("Following components are not present: ${InfoTable.missingParts}")
+    }
+
     override fun unpack(fileName: String) {
         cleanUp()
         try {
-            val info = Parser().parseBootImgHeader(fileName, avbtool = "aosp/avb/avbtool")
-            InfoTable.instance.addRule()
-            InfoTable.instance.addRow("image info", ParamConfig().cfg)
-            if (info.signatureType == BootImgInfo.VerifyType.AVB) {
-                log.info("continue to analyze vbmeta info in $fileName")
-                Avb().parseVbMeta(fileName)
-                InfoTable.instance.addRule()
-                InfoTable.instance.addRow("AVB info", Avb.getJsonFileName(fileName))
+            val hv = probeHeaderVersion(fileName)
+            log.warn("hv " + hv)
+            if (hv == 3) {
+                val bv3 = BootV3
+                        .parse(fileName)
+                        .extractImages(fileName)
+                        .extractVBMeta(fileName)
+                log.info(bv3.toString())
+                ObjectMapper().writerWithDefaultPrettyPrinter().writeValue(File("build/unzip_boot/bootimg.json"), bv3)
+                return
+            } else {
+                parserV2(fileName)
             }
-            Parser().extractBootImg(fileName, info2 = info)
-            val unpackedVbmeta = unpackVBMeta()
-
-            InfoTable.instance.addRule()
-            val tableHeader = AsciiTable().apply {
-                addRule()
-                addRow("What", "Where")
-                addRule()
-            }
-            log.info("\n\t\t\tUnpack Summary of $fileName\n{}\n{}", tableHeader.render(), InfoTable.instance.render())
-            if (unpackedVbmeta) {
-                val tableFooter = AsciiTable().apply {
-                    addRule()
-                    addRow("vbmeta.img", Avb.getJsonFileName("vbmeta.img"))
-                    addRule()
-                }
-                LoggerFactory.getLogger("vbmeta").info("\n" + tableFooter.render())
-            }
-            log.info("Following components are not present: ${InfoTable.missingParts}")
         } catch (e: IllegalArgumentException) {
             log.error(e.message)
             log.error("Parser can not continue")
@@ -69,7 +86,14 @@ class BootImgParser() : IPackable {
     }
 
     override fun pack(fileName: String) {
-        Packer().pack(mkbootfsBin = "./aosp/mkbootfs/build/exe/mkbootfs/mkbootfs")
+        if (3 == probeHeaderVersion(fileName)) {
+            val bootV3 = ObjectMapper().readValue(File("build/unzip_boot/bootimg.json"), BootV3::class.java)
+            Packer().packV3(mkbootfsBin = "./aosp/mkbootfs/build/exe/mkbootfs/mkbootfs")
+            Signer.signAVB(fileName, avbtool = "aosp/avb/avbtool", imageSize = bootV3.info.imageSize)
+            return
+        }
+
+        Packer().packV2(mkbootfsBin = "./aosp/mkbootfs/build/exe/mkbootfs/mkbootfs")
         Signer.sign(avbtool = "aosp/avb/avbtool", bootSigner = "aosp/boot_signer/build/libs/boot_signer.jar")
         if (File("vbmeta.img").exists()) {
             val partitionName = ObjectMapper().readValue(File(Avb.getJsonFileName(fileName)), AVBInfo::class.java).let {

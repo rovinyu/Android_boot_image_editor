@@ -1,6 +1,7 @@
 package cfig.bootimg
 
 import cfig.ParamConfig
+import cfig.bootimg.Common.Companion.getPaddingSize
 import org.apache.commons.exec.CommandLine
 import java.io.InputStream
 
@@ -49,14 +50,6 @@ class BootImgInfo(iS: InputStream?) : BootImgHeader(iS) {
     private fun getHeaderSize(pageSize: UInt): UInt {
         val pad = (pageSize - (1648U and (pageSize - 1U))) and (pageSize - 1U)
         return pad + 1648U
-    }
-
-    private fun getPaddingSize(position: UInt, pageSize: UInt): UInt {
-        return (pageSize - (position and pageSize - 1U)) and (pageSize - 1U)
-    }
-
-    private fun getPaddingSize(position: Int, pageSize: Int): Int {
-        return (pageSize - (position and pageSize - 1)) and (pageSize - 1)
     }
 
     fun toCommandLine(): CommandLine {

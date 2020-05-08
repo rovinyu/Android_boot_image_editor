@@ -1,0 +1,45 @@
+@startuml
+
+
+interface Device {
+/*
+kHighlight{Up,Down} -2/-3
+kInvokeItem -4
+kNoAction -1
+a menu position: non-negative value
+/*
+RecoveryUI* GetUI()
+ResetUI(RecoveryUI* ui)
+StartRecovery()
+PreWipeData()
+PostWipeData()
+
+vector<string>& GetMenuItems()
+int HandleMenuKey(int key, bool visible)
+BuiltinAction InvokeMenuItem(size_t menu_position)
+RemoveMenuItemForAction(Device::BuiltinAction action)
+}
+
+enum BuiltinAction {
+  NO_ACTION = 0,
+  REBOOT = 1,
+  APPLY_SDCARD = 2,
+  APPLY_ADB_SIDELOAD = 4,
+  WIPE_DATA = 5,
+  WIPE_CACHE = 6,
+  REBOOT_BOOTLOADER = 7,
+  SHUTDOWN = 8,
+  VIEW_RECOVERY_LOGS = 9,
+  MOUNT_SYSTEM = 10,
+  RUN_GRAPHICS_TEST = 11,
+  RUN_LOCALE_TEST = 12,
+  KEY_INTERRUPTED = 13,
+  ENTER_FASTBOOT = 14,
+  ENTER_RECOVERY = 15,
+  ENTER_RESCUE = 16,
+  REBOOT_FASTBOOT = 17,
+  REBOOT_RECOVERY = 18,
+  REBOOT_RESCUE = 19,
+}
+
+@enduml

@@ -2,14 +2,11 @@ package cfig.bootimg
 
 import cfig.Helper
 import cfig.ParamConfig
+import cfig.bootimg.Common.Companion.hashFileAndSize
 import cfig.io.Struct3
 import org.slf4j.LoggerFactory
 import java.io.File
-import java.io.FileInputStream
 import java.io.InputStream
-import java.nio.ByteBuffer
-import java.nio.ByteOrder
-import java.security.MessageDigest
 import java.util.regex.Pattern
 import kotlin.math.pow
 
@@ -80,102 +77,15 @@ open class BootImgHeader(
         }
 
         this.headerSize = info[17] as UInt
-        assert(this.headerSize.toInt() in intArrayOf(BOOT_IMAGE_HEADER_V2_SIZE, BOOT_IMAGE_HEADER_V1_SIZE))
+        assert(this.headerSize.toInt() in intArrayOf(BOOT_IMAGE_HEADER_V2_SIZE,
+                BOOT_IMAGE_HEADER_V1_SIZE, BOOT_IMAGE_HEADER_V0_SIZE)) {
+            "header size ${this.headerSize} illegal"
+        }
 
         if (this.headerVersion > 1U) {
             this.dtbLength = info[18] as UInt
             this.dtbOffset = info[19] as ULong
         }
-    }
-
-    private fun parseOsVersion(x: Int): String {
-        val a = x shr 14
-        val b = x - (a shl 14) shr 7
-        val c = x and 0x7f
-        return String.format("%d.%d.%d", a, b, c)
-    }
-
-    private fun parseOsPatchLevel(x: Int): String {
-        var y = x shr 4
-        val m = x and 0xf
-        y += 2000
-        return String.format("%d-%02d-%02d", y, m, 0)
-    }
-
-    @Throws(IllegalArgumentException::class)
-    private fun packOsVersion(x: String?): Int {
-        if (x.isNullOrBlank()) return 0
-        val pattern = Pattern.compile("^(\\d{1,3})(?:\\.(\\d{1,3})(?:\\.(\\d{1,3}))?)?")
-        val m = pattern.matcher(x)
-        if (m.find()) {
-            val a = Integer.decode(m.group(1))
-            var b = 0
-            var c = 0
-            if (m.groupCount() >= 2) {
-                b = Integer.decode(m.group(2))
-            }
-            if (m.groupCount() == 3) {
-                c = Integer.decode(m.group(3))
-            }
-            assert(a < 128)
-            assert(b < 128)
-            assert(c < 128)
-            return (a shl 14) or (b shl 7) or c
-        } else {
-            throw IllegalArgumentException("invalid os_version")
-        }
-    }
-
-    private fun packOsPatchLevel(x: String?): Int {
-        if (x.isNullOrBlank()) return 0
-        val ret: Int
-        val pattern = Pattern.compile("^(\\d{4})-(\\d{2})-(\\d{2})")
-        val matcher = pattern.matcher(x)
-        if (matcher.find()) {
-            val y = Integer.parseInt(matcher.group(1), 10) - 2000
-            val m = Integer.parseInt(matcher.group(2), 10)
-            // 7 bits allocated for the year, 4 bits for the month
-            assert(y in 0..127)
-            assert(m in 1..12)
-            ret = (y shl 4) or m
-        } else {
-            throw IllegalArgumentException("invalid os_patch_level")
-        }
-
-        return ret
-    }
-
-    @Throws(CloneNotSupportedException::class)
-    private fun hashFileAndSize(vararg inFiles: String?): ByteArray {
-        val md = MessageDigest.getInstance("SHA1")
-        for (item in inFiles) {
-            if (null == item) {
-                md.update(ByteBuffer.allocate(4).order(ByteOrder.LITTLE_ENDIAN)
-                        .putInt(0)
-                        .array())
-                log.debug("update null $item: " + Helper.toHexString((md.clone() as MessageDigest).digest()))
-            } else {
-                val currentFile = File(item)
-                FileInputStream(currentFile).use { iS ->
-                    var byteRead: Int
-                    val dataRead = ByteArray(1024)
-                    while (true) {
-                        byteRead = iS.read(dataRead)
-                        if (-1 == byteRead) {
-                            break
-                        }
-                        md.update(dataRead, 0, byteRead)
-                    }
-                    log.debug("update file $item: " + Helper.toHexString((md.clone() as MessageDigest).digest()))
-                    md.update(ByteBuffer.allocate(4).order(ByteOrder.LITTLE_ENDIAN)
-                            .putInt(currentFile.length().toInt())
-                            .array())
-                    log.debug("update SIZE $item: " + Helper.toHexString((md.clone() as MessageDigest).digest()))
-                }
-            }
-        }
-
-        return md.digest()
     }
 
     private fun get_recovery_dtbo_offset(): UInt {
@@ -234,7 +144,7 @@ open class BootImgHeader(
                 hashFileAndSize(param.kernel, param.ramdisk, param.second, param.dtbo, param.dtb)
             }
             else -> {
-                throw java.lang.IllegalArgumentException("headerVersion ${this.headerVersion} illegal")
+                throw IllegalArgumentException("headerVersion ${this.headerVersion} illegal")
             }
         }
         this.hash = imageId
@@ -247,7 +157,7 @@ open class BootImgHeader(
         }
         assert(pageSizeChoices.contains(pageSize.toLong())) { "invalid parameter [pageSize=$pageSize], (choose from $pageSizeChoices)" }
         return Struct3(FORMAT_STRING).pack(
-                "ANDROID!",
+                magic,
                 //10I
                 kernelLength,
                 kernelOffset,
@@ -273,7 +183,7 @@ open class BootImgHeader(
                 if (headerVersion > 0U) recoveryDtboOffset else 0,
                 //I
                 when (headerVersion) {
-                    0U -> 0
+                    0U -> BOOT_IMAGE_HEADER_V0_SIZE
                     1U -> BOOT_IMAGE_HEADER_V1_SIZE
                     2U -> BOOT_IMAGE_HEADER_V2_SIZE
                     else -> java.lang.IllegalArgumentException("headerVersion $headerVersion illegal")
@@ -301,9 +211,67 @@ open class BootImgHeader(
                 "Q"         //dtb offset [v2]
         const val BOOT_IMAGE_HEADER_V2_SIZE = 1660
         const val BOOT_IMAGE_HEADER_V1_SIZE = 1648
+        const val BOOT_IMAGE_HEADER_V0_SIZE = 0
 
         init {
             assert(BOOT_IMAGE_HEADER_V2_SIZE == Struct3(FORMAT_STRING).calcSize())
+        }
+
+        fun parseOsVersion(x: Int): String {
+            val a = x shr 14
+            val b = x - (a shl 14) shr 7
+            val c = x and 0x7f
+            return String.format("%d.%d.%d", a, b, c)
+        }
+
+        fun parseOsPatchLevel(x: Int): String {
+            var y = x shr 4
+            val m = x and 0xf
+            y += 2000
+            return String.format("%d-%02d-%02d", y, m, 0)
+        }
+
+        @Throws(IllegalArgumentException::class)
+        fun packOsVersion(x: String?): Int {
+            if (x.isNullOrBlank()) return 0
+            val pattern = Pattern.compile("^(\\d{1,3})(?:\\.(\\d{1,3})(?:\\.(\\d{1,3}))?)?")
+            val m = pattern.matcher(x)
+            if (m.find()) {
+                val a = Integer.decode(m.group(1))
+                var b = 0
+                var c = 0
+                if (m.groupCount() >= 2) {
+                    b = Integer.decode(m.group(2))
+                }
+                if (m.groupCount() == 3) {
+                    c = Integer.decode(m.group(3))
+                }
+                assert(a < 128)
+                assert(b < 128)
+                assert(c < 128)
+                return (a shl 14) or (b shl 7) or c
+            } else {
+                throw IllegalArgumentException("invalid os_version")
+            }
+        }
+
+        fun packOsPatchLevel(x: String?): Int {
+            if (x.isNullOrBlank()) return 0
+            val ret: Int
+            val pattern = Pattern.compile("^(\\d{4})-(\\d{2})-(\\d{2})")
+            val matcher = pattern.matcher(x)
+            if (matcher.find()) {
+                val y = Integer.parseInt(matcher.group(1), 10) - 2000
+                val m = Integer.parseInt(matcher.group(2), 10)
+                // 7 bits allocated for the year, 4 bits for the month
+                assert(y in 0..127)
+                assert(m in 1..12)
+                ret = (y shl 4) or m
+            } else {
+                throw IllegalArgumentException("invalid os_patch_level")
+            }
+
+            return ret
         }
     }
 }

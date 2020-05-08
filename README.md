@@ -8,8 +8,11 @@ This tool focuses on editing Android boot.img(also recovery.img, and vbmeta.img)
 ## 1. Prerequisite
 #### 1.1 Host OS requirement:
 
-Linux or Mac.
-Also need python 2.x and jdk 8.
+Linux or Mac development env.
+
+ - python 2.x
+ - jdk 8
+ - zlib1g-dev
 
 #### 1.2 Target Android requirement:
 
@@ -17,6 +20,7 @@ Also need python 2.x and jdk 8.
 
 Supported images:
  - boot.img
+ - vendor\_boot.img
  - recovery.img (also recovery-two-step.img)
  - vbmeta.img (also vbmeta\_system.img, vbmeta\_vendor.img etc.)
  - dtbo.img (only 'unpack' is supported)
@@ -99,6 +103,7 @@ https://android.googlesource.com/platform/system/extras
 
 cpio / fs\_config
 https://android.googlesource.com/platform/system/core
+https://www.kernel.org/doc/Documentation/early-userspace/buffer-format.txt
 
 AVB
 https://android.googlesource.com/platform/external/avb/

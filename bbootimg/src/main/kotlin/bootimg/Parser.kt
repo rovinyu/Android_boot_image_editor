@@ -1,41 +1,22 @@
 package cfig
 
+import cfig.Avb.Companion.hasAvbFooter
+import cfig.Avb.Companion.verifyAVBIntegrity
 import cfig.bootimg.BootImgInfo
+import cfig.bootimg.Common.Companion.unpackRamdisk
 import cfig.dtb_util.DTC
 import cfig.kernel_util.KernelExtractor
 import com.fasterxml.jackson.databind.ObjectMapper
-import org.apache.commons.exec.CommandLine
-import org.apache.commons.exec.DefaultExecutor
 import org.slf4j.LoggerFactory
 import java.io.File
 import java.io.FileInputStream
 
 @OptIn(ExperimentalUnsignedTypes::class)
 class Parser {
-    private fun verifiedWithAVB(fileName: String): Boolean {
-        val expectedBf = "AVBf".toByteArray()
-        FileInputStream(fileName).use { fis ->
-            fis.skip(File(fileName).length() - 64)
-            val bf = ByteArray(4)
-            fis.read(bf)
-            return bf.contentEquals(expectedBf)
-        }
-    }
-
-    private fun unpackRamdisk(workDir: String, ramdiskGz: String) {
-        val exe = DefaultExecutor()
-        exe.workingDirectory = File(workDir + "root")
-        if (exe.workingDirectory.exists()) exe.workingDirectory.deleteRecursively()
-        exe.workingDirectory.mkdirs()
-        val ramdiskFile = File(ramdiskGz.removeSuffix(".gz"))
-        exe.execute(CommandLine.parse("cpio -i -m -F " + ramdiskFile.canonicalPath))
-        log.info(" ramdisk extracted : $ramdiskFile -> ${exe.workingDirectory.path}")
-    }
-
     fun parseBootImgHeader(fileName: String, avbtool: String): BootImgInfo {
         val info2 = BootImgInfo(FileInputStream(fileName))
         val param = ParamConfig()
-        if (verifiedWithAVB(fileName)) {
+        if (hasAvbFooter(fileName)) {
             info2.signatureType = BootImgInfo.VerifyType.AVB
             verifyAVBIntegrity(fileName, avbtool)
         } else {
@@ -51,13 +32,6 @@ class Parser {
         log.info("image info written to ${param.cfg}")
 
         return info2
-    }
-
-    private fun parseKernelInfo(kernelFile: String) {
-        val ke = KernelExtractor()
-        if (ke.envCheck()) {
-            ke.run(kernelFile, File("."))
-        }
     }
 
     fun extractBootImg(fileName: String, info2: BootImgInfo) {
@@ -148,15 +122,13 @@ class Parser {
     }
 
     companion object {
-        private val log = LoggerFactory.getLogger("Parser")!!
+        private val log = LoggerFactory.getLogger("Parser")
 
-        fun verifyAVBIntegrity(fileName: String, avbtool: String) {
-            val cmdline = "$avbtool verify_image --image $fileName"
-            log.info(cmdline)
-            try {
-                DefaultExecutor().execute(CommandLine.parse(cmdline))
-            } catch (e: Exception) {
-                throw IllegalArgumentException("$fileName failed integrity check by \"$cmdline\"")
+        fun parseKernelInfo(kernelFile: String) {
+            KernelExtractor().let { ke ->
+                if (ke.envCheck()) {
+                    ke.run(kernelFile, File("."))
+                }
             }
         }
     }

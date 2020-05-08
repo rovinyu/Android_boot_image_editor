@@ -1,128 +1,69 @@
 package cfig
 
-import cfig.bootimg.BootImgInfo
+import cfig.bootimg.Common.Companion.assertFileEquals
+import cfig.bootimg.Common.Companion.deleleIfExists
+import cfig.bootimg.Common.Companion.packRootfs
+import cfig.bootimg.Common.Companion.writePaddedFile
+import cfig.bootimg.v3.BootV3
 import com.fasterxml.jackson.databind.ObjectMapper
-import org.apache.commons.exec.CommandLine
 import org.apache.commons.exec.DefaultExecutor
-import org.apache.commons.exec.PumpStreamHandler
 import org.slf4j.LoggerFactory
-import java.io.*
+import java.io.File
+import java.io.FileOutputStream
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
-import java.security.MessageDigest
 
 @OptIn(ExperimentalUnsignedTypes::class)
 class Packer {
     private val log = LoggerFactory.getLogger("Packer")
 
-    @Throws(CloneNotSupportedException::class)
-    private fun hashFileAndSize(vararg inFiles: String?): ByteArray {
-        val md = MessageDigest.getInstance("SHA1")
-        for (item in inFiles) {
-            if (null == item) {
-                md.update(ByteBuffer.allocate(4).order(ByteOrder.LITTLE_ENDIAN)
-                        .putInt(0)
-                        .array())
-                log.debug("update null $item: " + Helper.toHexString((md.clone() as MessageDigest).digest()))
-            } else {
-                val currentFile = File(item)
-                FileInputStream(currentFile).use { iS ->
-                    var byteRead: Int
-                    val dataRead = ByteArray(1024)
-                    while (true) {
-                        byteRead = iS.read(dataRead)
-                        if (-1 == byteRead) {
-                            break
-                        }
-                        md.update(dataRead, 0, byteRead)
-                    }
-                    log.debug("update file $item: " + Helper.toHexString((md.clone() as MessageDigest).digest()))
-                    md.update(ByteBuffer.allocate(4).order(ByteOrder.LITTLE_ENDIAN)
-                            .putInt(currentFile.length().toInt())
-                            .array())
-                    log.debug("update SIZE $item: " + Helper.toHexString((md.clone() as MessageDigest).digest()))
-                }
-            }
+    fun packV3(mkbootfsBin: String) {
+        val workDir = "build/unzip_boot/"
+        val cfgFile = workDir + "bootimg.json"
+        log.info("Loading config from $cfgFile")
+        val cfg = ObjectMapper().readValue(File(cfgFile), BootV3::class.java)
+        if (File(workDir + cfg.ramdisk.file).exists() && !File(workDir + "root").exists()) {
+            //do nothing if we have ramdisk.img.gz but no /root
+            log.warn("Use prebuilt ramdisk file: ${cfg.ramdisk.file}")
+        } else {
+            File(workDir + cfg.ramdisk.file).deleleIfExists()
+            packRootfs(mkbootfsBin)
+        }
+        cfg.kernel.size = File(workDir + cfg.kernel.file).length().toInt()
+        cfg.ramdisk.size = File(workDir + cfg.ramdisk.file).length().toInt()
+
+        //header
+        FileOutputStream(cfg.info.output + ".clear", false).use { fos ->
+            val encodedHeader = cfg.toHeader().encode()
+            fos.write(encodedHeader)
+            fos.write(ByteArray((
+                    Helper.round_to_multiple(encodedHeader.size.toUInt(),
+                            cfg.info.pageSize) - encodedHeader.size.toUInt()).toInt()
+            ))
         }
 
-        return md.digest()
-    }
-
-    private fun writePaddedFile(inBF: ByteBuffer, srcFile: String, padding: UInt) {
-        assert(padding < Int.MAX_VALUE.toUInt())
-        writePaddedFile(inBF, srcFile, padding.toInt())
-    }
-
-    private fun writePaddedFile(inBF: ByteBuffer, srcFile: String, padding: Int) {
-        FileInputStream(srcFile).use { iS ->
-            var byteRead: Int
-            val dataRead = ByteArray(128)
-            while (true) {
-                byteRead = iS.read(dataRead)
-                if (-1 == byteRead) {
-                    break
-                }
-                inBF.put(dataRead, 0, byteRead)
-            }
-            padFile(inBF, padding)
-        }
-    }
-
-    private fun padFile(inBF: ByteBuffer, padding: Int) {
-        val pad = padding - (inBF.position() and padding - 1) and padding - 1
-        inBF.put(ByteArray(pad))
-    }
-
-    private fun writeData(info2: BootImgInfo, outputFile: String) {
+        //data
         log.info("Writing data ...")
-        val param = ParamConfig()
-
         val bf = ByteBuffer.allocate(1024 * 1024 * 64)//assume total SIZE small than 64MB
         bf.order(ByteOrder.LITTLE_ENDIAN)
-
-        writePaddedFile(bf, param.kernel, info2.pageSize)
-        if (info2.ramdiskLength > 0U) {
-            writePaddedFile(bf, param.ramdisk!!, info2.pageSize)
-        }
-        if (info2.secondBootloaderLength > 0U) {
-            writePaddedFile(bf, param.second!!, info2.pageSize)
-        }
-        if (info2.recoveryDtboLength > 0U) {
-            writePaddedFile(bf, param.dtbo!!, info2.pageSize)
-        }
-        if (info2.dtbLength > 0U) {
-            writePaddedFile(bf, param.dtb!!, info2.pageSize)
-        }
+        writePaddedFile(bf, workDir + cfg.kernel.file, cfg.info.pageSize)
+        writePaddedFile(bf, workDir + cfg.ramdisk.file, cfg.info.pageSize)
         //write
-        FileOutputStream("$outputFile.clear", true).use { fos ->
+        FileOutputStream("${cfg.info.output}.clear", true).use { fos ->
             fos.write(bf.array(), 0, bf.position())
         }
-    }
 
-    private fun packRootfs(mkbootfs: String) {
-        val param = ParamConfig()
-        log.info("Packing rootfs ${UnifiedConfig.workDir}root ...")
-        val outputStream = ByteArrayOutputStream()
-        val exec = DefaultExecutor()
-        exec.streamHandler = PumpStreamHandler(outputStream)
-        val cmdline = "$mkbootfs ${UnifiedConfig.workDir}root"
-        log.info(cmdline)
-        exec.execute(CommandLine.parse(cmdline))
-        Helper.gnuZipFile2(param.ramdisk!!, ByteArrayInputStream(outputStream.toByteArray()))
-        log.info("${param.ramdisk} is ready")
-    }
-
-    private fun File.deleleIfExists() {
-        if (this.exists()) {
-            if (!this.isFile) {
-                throw IllegalStateException("${this.canonicalPath} should be regular file")
-            }
-            log.info("Deleting ${this.path} ...")
-            this.delete()
+        //google way
+        cfg.toCommandLine().apply {
+            addArgument(cfg.info.output + ".google")
+            log.info(this.toString())
+            DefaultExecutor().execute(this)
         }
+
+        assertFileEquals(cfg.info.output + ".clear", cfg.info.output + ".google")
     }
 
-    fun pack(mkbootfsBin: String) {
+    fun packV2(mkbootfsBin: String) {
         val param = ParamConfig()
         log.info("Loading config from ${param.cfg}")
         val cfg = ObjectMapper().readValue(File(param.cfg), UnifiedConfig::class.java)
@@ -151,22 +92,37 @@ class Packer {
             fos.write(encodedHeader)
             fos.write(ByteArray((Helper.round_to_multiple(encodedHeader.size.toUInt(), info2.pageSize) - encodedHeader.size.toUInt()).toInt()))
         }
-        writeData(info2, cfg.info.output)
 
-        val googleCmd = info2.toCommandLine().apply {
+        log.info("Writing data ...")
+        val bytesV2 = ByteBuffer.allocate(1024 * 1024 * 64)//assume total SIZE small than 64MB
+                .let { bf ->
+                    bf.order(ByteOrder.LITTLE_ENDIAN)
+                    writePaddedFile(bf, param.kernel, info2.pageSize)
+                    if (info2.ramdiskLength > 0U) {
+                        writePaddedFile(bf, param.ramdisk!!, info2.pageSize)
+                    }
+                    if (info2.secondBootloaderLength > 0U) {
+                        writePaddedFile(bf, param.second!!, info2.pageSize)
+                    }
+                    if (info2.recoveryDtboLength > 0U) {
+                        writePaddedFile(bf, param.dtbo!!, info2.pageSize)
+                    }
+                    if (info2.dtbLength > 0U) {
+                        writePaddedFile(bf, param.dtb!!, info2.pageSize)
+                    }
+                    bf
+                }
+        //write
+        FileOutputStream("${cfg.info.output}.clear", true).use { fos ->
+            fos.write(bytesV2.array(), 0, bytesV2.position())
+        }
+
+        info2.toCommandLine().apply {
             addArgument(cfg.info.output + ".google")
+            log.info(this.toString())
+            DefaultExecutor().execute(this)
         }
-        log.info(googleCmd.toString())
-        DefaultExecutor().execute(googleCmd)
 
-        val ourHash = hashFileAndSize(cfg.info.output + ".clear")
-        val googleHash = hashFileAndSize(cfg.info.output + ".google")
-        log.info("ours hash ${Helper.toHexString(ourHash)}, google's hash ${Helper.toHexString(googleHash)}")
-        if (ourHash.contentEquals(googleHash)) {
-            log.info("Hash verification passed: ${Helper.toHexString(ourHash)}")
-        } else {
-            log.error("Hash verification failed")
-            throw UnknownError("Do not know why hash verification fails, maybe a bug")
-        }
+        assertFileEquals(cfg.info.output + ".clear", cfg.info.output + ".google")
     }
 }
