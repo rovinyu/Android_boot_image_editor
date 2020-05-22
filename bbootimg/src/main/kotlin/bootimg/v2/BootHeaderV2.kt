@@ -1,17 +1,16 @@
-package cfig.bootimg
+package cfig.bootimg.v2
 
 import cfig.Helper
-import cfig.ParamConfig
+import cfig.bootimg.Common
 import cfig.bootimg.Common.Companion.hashFileAndSize
 import cfig.io.Struct3
 import org.slf4j.LoggerFactory
 import java.io.File
 import java.io.InputStream
-import java.util.regex.Pattern
 import kotlin.math.pow
 
 @OptIn(ExperimentalUnsignedTypes::class)
-open class BootImgHeader(
+open class BootHeaderV2(
         var kernelLength: UInt = 0U,
         var kernelOffset: UInt = 0U,
 
@@ -64,8 +63,8 @@ open class BootImgHeader(
         this.headerVersion = info[9] as UInt
         val osNPatch = info[10] as UInt
         if (0U != osNPatch) { //treated as 'reserved' in this boot image
-            this.osVersion = parseOsVersion(osNPatch.toInt() shr 11)
-            this.osPatchLevel = parseOsPatchLevel((osNPatch and 0x7ff.toUInt()).toInt())
+            this.osVersion = Common.parseOsVersion(osNPatch.toInt() shr 11)
+            this.osPatchLevel = Common.parseOsPatchLevel((osNPatch and 0x7ff.toUInt()).toInt())
         }
         this.board = info[11] as String
         this.cmdline = (info[12] as String) + (info[14] as String)
@@ -168,7 +167,7 @@ open class BootImgHeader(
                 tagsOffset,
                 pageSize,
                 headerVersion,
-                (packOsVersion(osVersion) shl 11) or packOsPatchLevel(osPatchLevel),
+                (Common.packOsVersion(osVersion) shl 11) or Common.packOsPatchLevel(osPatchLevel),
                 //16s
                 board,
                 //512s
@@ -217,61 +216,5 @@ open class BootImgHeader(
             assert(BOOT_IMAGE_HEADER_V2_SIZE == Struct3(FORMAT_STRING).calcSize())
         }
 
-        fun parseOsVersion(x: Int): String {
-            val a = x shr 14
-            val b = x - (a shl 14) shr 7
-            val c = x and 0x7f
-            return String.format("%d.%d.%d", a, b, c)
-        }
-
-        fun parseOsPatchLevel(x: Int): String {
-            var y = x shr 4
-            val m = x and 0xf
-            y += 2000
-            return String.format("%d-%02d-%02d", y, m, 0)
-        }
-
-        @Throws(IllegalArgumentException::class)
-        fun packOsVersion(x: String?): Int {
-            if (x.isNullOrBlank()) return 0
-            val pattern = Pattern.compile("^(\\d{1,3})(?:\\.(\\d{1,3})(?:\\.(\\d{1,3}))?)?")
-            val m = pattern.matcher(x)
-            if (m.find()) {
-                val a = Integer.decode(m.group(1))
-                var b = 0
-                var c = 0
-                if (m.groupCount() >= 2) {
-                    b = Integer.decode(m.group(2))
-                }
-                if (m.groupCount() == 3) {
-                    c = Integer.decode(m.group(3))
-                }
-                assert(a < 128)
-                assert(b < 128)
-                assert(c < 128)
-                return (a shl 14) or (b shl 7) or c
-            } else {
-                throw IllegalArgumentException("invalid os_version")
-            }
-        }
-
-        fun packOsPatchLevel(x: String?): Int {
-            if (x.isNullOrBlank()) return 0
-            val ret: Int
-            val pattern = Pattern.compile("^(\\d{4})-(\\d{2})-(\\d{2})")
-            val matcher = pattern.matcher(x)
-            if (matcher.find()) {
-                val y = Integer.parseInt(matcher.group(1), 10) - 2000
-                val m = Integer.parseInt(matcher.group(2), 10)
-                // 7 bits allocated for the year, 4 bits for the month
-                assert(y in 0..127)
-                assert(m in 1..12)
-                ret = (y shl 4) or m
-            } else {
-                throw IllegalArgumentException("invalid os_patch_level")
-            }
-
-            return ret
-        }
     }
 }

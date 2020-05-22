@@ -1,12 +1,11 @@
-package cfig.bootimg
+package cfig.bootimg.v2
 
-import cfig.ParamConfig
 import cfig.bootimg.Common.Companion.getPaddingSize
 import org.apache.commons.exec.CommandLine
 import java.io.InputStream
 
 @OptIn(ExperimentalUnsignedTypes::class)
-class BootImgInfo(iS: InputStream?) : BootImgHeader(iS) {
+class BootImgInfo(iS: InputStream?) : BootHeaderV2(iS) {
     constructor() : this(null)
 
     val kernelPosition: UInt
@@ -38,7 +37,7 @@ class BootImgInfo(iS: InputStream?) : BootImgHeader(iS) {
                     getPaddingSize(recoveryDtboLength, pageSize)
         }
 
-    var signatureType: BootImgInfo.VerifyType? = null
+    var signatureType: VerifyType? = null
 
     var imageSize: Long = 0
 

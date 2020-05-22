@@ -1,7 +1,7 @@
 package cfig.packable
 
 import cfig.Avb
-import cfig.UnifiedConfig
+import cfig.bootimg.v2.UnifiedConfig
 import java.io.File
 
 @OptIn(ExperimentalUnsignedTypes::class)

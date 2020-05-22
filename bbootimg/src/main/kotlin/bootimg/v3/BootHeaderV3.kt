@@ -1,9 +1,8 @@
 package cfig.bootimg.v3
 
-import cfig.bootimg.BootImgHeader
-import cfig.bootimg.BootImgHeader.Companion.parseOsPatchLevel
-import cfig.bootimg.BootImgHeader.Companion.parseOsVersion
-import cfig.bootimg.BootImgInfo
+import cfig.bootimg.Common
+import cfig.bootimg.v2.BootHeaderV2
+import cfig.bootimg.v2.BootImgInfo
 import cfig.io.Struct3
 import org.slf4j.LoggerFactory
 import java.io.InputStream
@@ -33,8 +32,8 @@ class BootHeaderV3(
         this.ramdiskSize = info[2] as UInt
         val osNPatch = info[3] as UInt
         if (0U != osNPatch) { //treated as 'reserved' in this boot image
-            this.osVersion = parseOsVersion(osNPatch.toInt() shr 11)
-            this.osPatchLevel = parseOsPatchLevel((osNPatch and 0x7ff.toUInt()).toInt())
+            this.osVersion = Common.parseOsVersion(osNPatch.toInt() shr 11)
+            this.osPatchLevel = Common.parseOsPatchLevel((osNPatch and 0x7ff.toUInt()).toInt())
         }
         this.headerSize = info[4] as UInt
         //5,6,7,8 reserved
@@ -50,7 +49,7 @@ class BootHeaderV3(
                 magic,
                 kernelSize,
                 ramdiskSize,
-                (BootImgHeader.packOsVersion(osVersion) shl 11) or BootImgHeader.packOsPatchLevel(osPatchLevel),
+                (Common.packOsVersion(osVersion) shl 11) or Common.packOsPatchLevel(osPatchLevel),
                 headerSize,
                 0,
                 0,

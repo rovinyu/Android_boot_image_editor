@@ -2,6 +2,7 @@ package cfig.bootimg
 
 import cfig.Helper
 import cfig.io.Struct3.InputStreamExt.Companion.getInt
+import cfig.kernel_util.KernelExtractor
 import org.apache.commons.exec.CommandLine
 import org.apache.commons.exec.DefaultExecutor
 import org.apache.commons.exec.PumpStreamHandler
@@ -13,11 +14,84 @@ import java.io.FileInputStream
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.security.MessageDigest
+import java.util.regex.Pattern
 
 @OptIn(ExperimentalUnsignedTypes::class)
 class Common {
+    data class VeritySignature(
+            var type: String = "dm-verity",
+            var path: String = "/boot",
+            var verity_pk8: String = "aosp/security/verity.pk8",
+            var verity_pem: String = "aosp/security/verity.x509.pem",
+            var jarPath: String = "aosp/boot_signer/build/libs/boot_signer.jar")
+
     companion object {
         private val log = LoggerFactory.getLogger(Common::class.java)
+
+        @Throws(IllegalArgumentException::class)
+        fun packOsVersion(x: String?): Int {
+            if (x.isNullOrBlank()) return 0
+            val pattern = Pattern.compile("^(\\d{1,3})(?:\\.(\\d{1,3})(?:\\.(\\d{1,3}))?)?")
+            val m = pattern.matcher(x)
+            if (m.find()) {
+                val a = Integer.decode(m.group(1))
+                var b = 0
+                var c = 0
+                if (m.groupCount() >= 2) {
+                    b = Integer.decode(m.group(2))
+                }
+                if (m.groupCount() == 3) {
+                    c = Integer.decode(m.group(3))
+                }
+                assert(a < 128)
+                assert(b < 128)
+                assert(c < 128)
+                return (a shl 14) or (b shl 7) or c
+            } else {
+                throw IllegalArgumentException("invalid os_version")
+            }
+        }
+
+        fun parseOsVersion(x: Int): String {
+            val a = x shr 14
+            val b = x - (a shl 14) shr 7
+            val c = x and 0x7f
+            return String.format("%d.%d.%d", a, b, c)
+        }
+
+        fun packOsPatchLevel(x: String?): Int {
+            if (x.isNullOrBlank()) return 0
+            val ret: Int
+            val pattern = Pattern.compile("^(\\d{4})-(\\d{2})-(\\d{2})")
+            val matcher = pattern.matcher(x)
+            if (matcher.find()) {
+                val y = Integer.parseInt(matcher.group(1), 10) - 2000
+                val m = Integer.parseInt(matcher.group(2), 10)
+                // 7 bits allocated for the year, 4 bits for the month
+                assert(y in 0..127)
+                assert(m in 1..12)
+                ret = (y shl 4) or m
+            } else {
+                throw IllegalArgumentException("invalid os_patch_level")
+            }
+
+            return ret
+        }
+
+        fun parseOsPatchLevel(x: Int): String {
+            var y = x shr 4
+            val m = x and 0xf
+            y += 2000
+            return String.format("%d-%02d-%02d", y, m, 0)
+        }
+
+        fun parseKernelInfo(kernelFile: String) {
+            KernelExtractor().let { ke ->
+                if (ke.envCheck()) {
+                    ke.run(kernelFile, File("."))
+                }
+            }
+        }
 
         fun getPaddingSize(position: UInt, pageSize: UInt): UInt {
             return (pageSize - (position and pageSize - 1U)) and (pageSize - 1U)

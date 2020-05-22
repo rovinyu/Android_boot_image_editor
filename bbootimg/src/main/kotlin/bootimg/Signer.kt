@@ -1,9 +1,10 @@
-package cfig
+package cfig.bootimg
 
 import avb.AVBInfo
 import avb.alg.Algorithms
+import cfig.Avb
 import cfig.Avb.Companion.getJsonFileName
-import cfig.bootimg.BootImgInfo
+import cfig.Helper
 import com.fasterxml.jackson.databind.ObjectMapper
 import org.apache.commons.exec.CommandLine
 import org.apache.commons.exec.DefaultExecutor
@@ -15,7 +16,7 @@ class Signer {
     companion object {
         private val log = LoggerFactory.getLogger(Signer::class.java)
 
-        fun signAVB(output: String, avbtool: String, imageSize: Long) {
+        fun signAVB(output: String, imageSize: Long, avbtool: String = "aosp/avb/avbtool") {
             log.info("Adding hash_footer with verified-boot 2.0 style")
             val ai = ObjectMapper().readValue(File(getJsonFileName(output)), AVBInfo::class.java)
             val alg = Algorithms.get(ai.header!!.algorithm_type.toInt())
@@ -56,27 +57,15 @@ class Signer {
             //Parser.verifyAVBIntegrity(cfg.info.output + ".signed2", avbtool)
         }
 
-        fun sign(avbtool: String, bootSigner: String) {
-            log.info("Loading config from ${ParamConfig().cfg}")
-            val info2 = UnifiedConfig.readBack2()
-            val cfg = ObjectMapper().readValue(File(ParamConfig().cfg), UnifiedConfig::class.java)
-
-            when (info2.signatureType) {
-                BootImgInfo.VerifyType.VERIFY -> {
-                    log.info("Signing with verified-boot 1.0 style")
-                    val sig = ImgInfo.VeritySignature()
-                    val bootSignCmd = "java -jar $bootSigner " +
-                            "${sig.path} ${cfg.info.output}.clear " +
-                            "${sig.verity_pk8} ${sig.verity_pem} " +
-                            "${cfg.info.output}.signed"
-                    log.info(bootSignCmd)
-                    DefaultExecutor().execute(CommandLine.parse(bootSignCmd))
-                }
-                BootImgInfo.VerifyType.AVB -> {
-                    log.info("Adding hash_footer with verified-boot 2.0 style")
-                    signAVB(cfg.info.output, avbtool, info2.imageSize)
-                }
-            }
+        fun signVB1(src: String, tgt: String, bootSigner: String = "aosp/boot_signer/build/libs/boot_signer.jar") {
+            log.info("Signing with verified-boot 1.0 style")
+            val sig = Common.VeritySignature()
+            val bootSignCmd = "java -jar $bootSigner " +
+                    "${sig.path} $src " +
+                    "${sig.verity_pk8} ${sig.verity_pem} " +
+                    "$tgt"
+            log.info(bootSignCmd)
+            DefaultExecutor().execute(CommandLine.parse(bootSignCmd))
         }
 
         fun mapToJson(m: LinkedHashMap<*, *>): String {

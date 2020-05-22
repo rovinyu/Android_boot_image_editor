@@ -1,7 +1,7 @@
 package cfig.packable
 
 import cfig.EnvironmentVerifier
-import cfig.UnifiedConfig
+import cfig.bootimg.v2.UnifiedConfig
 import cfig.dtb_util.DTC
 import org.apache.commons.exec.CommandLine
 import org.apache.commons.exec.DefaultExecutor

@@ -8,6 +8,7 @@ import avb.blob.Footer
 import avb.blob.Header
 import avb.desc.*
 import cfig.Helper.Companion.paddingWith
+import cfig.bootimg.v2.UnifiedConfig
 import cfig.io.Struct3
 import com.fasterxml.jackson.databind.ObjectMapper
 import org.apache.commons.codec.binary.Hex

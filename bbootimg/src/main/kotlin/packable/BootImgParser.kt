@@ -2,12 +2,15 @@ package cfig.packable
 
 import avb.AVBInfo
 import avb.blob.Footer
-import cfig.*
-import cfig.bootimg.BootImgInfo
+import cfig.Avb
+import cfig.bootimg.v2.ParamConfig
+import cfig.bootimg.Signer
+import cfig.bootimg.v2.UnifiedConfig
+import cfig.bootimg.v2.BootImgInfo
 import cfig.bootimg.Common.Companion.probeHeaderVersion
+import cfig.bootimg.v2.BootV2
 import cfig.bootimg.v3.BootV3
 import com.fasterxml.jackson.databind.ObjectMapper
-import de.vandermeer.asciitable.AsciiTable
 import org.slf4j.LoggerFactory
 import java.io.File
 import java.io.FileInputStream
@@ -20,47 +23,6 @@ class BootImgParser() : IPackable {
 
     override fun capabilities(): List<String> {
         return listOf("^boot\\.img$", "^recovery\\.img$", "^recovery-two-step\\.img$")
-    }
-
-    private fun unpackVBMeta(): Boolean {
-        return if (File("vbmeta.img").exists()) {
-            log.warn("Found vbmeta.img, parsing ...")
-            VBMetaParser().unpack("vbmeta.img")
-            true
-        } else {
-            false
-        }
-    }
-
-    private fun parserV2(fileName: String) {
-        val info = Parser().parseBootImgHeader(fileName, avbtool = "aosp/avb/avbtool")
-        InfoTable.instance.addRule()
-        InfoTable.instance.addRow("image info", ParamConfig().cfg)
-        if (info.signatureType == BootImgInfo.VerifyType.AVB) {
-            log.info("continue to analyze vbmeta info in $fileName")
-            Avb().parseVbMeta(fileName)
-            InfoTable.instance.addRule()
-            InfoTable.instance.addRow("AVB info", Avb.getJsonFileName(fileName))
-        }
-        Parser().extractBootImg(fileName, info2 = info)
-        val unpackedVbmeta = unpackVBMeta()
-
-        InfoTable.instance.addRule()
-        val tableHeader = AsciiTable().apply {
-            addRule()
-            addRow("What", "Where")
-            addRule()
-        }
-        log.info("\n\t\t\tUnpack Summary of $fileName\n{}\n{}", tableHeader.render(), InfoTable.instance.render())
-        if (unpackedVbmeta) {
-            val tableFooter = AsciiTable().apply {
-                addRule()
-                addRow("vbmeta.img", Avb.getJsonFileName("vbmeta.img"))
-                addRule()
-            }
-            LoggerFactory.getLogger("vbmeta").info("\n" + tableFooter.render())
-        }
-        log.info("Following components are not present: ${InfoTable.missingParts}")
     }
 
     override fun unpack(fileName: String) {
@@ -77,7 +39,7 @@ class BootImgParser() : IPackable {
                 ObjectMapper().writerWithDefaultPrettyPrinter().writeValue(File("build/unzip_boot/bootimg.json"), bv3)
                 return
             } else {
-                parserV2(fileName)
+                BootV2.parserV2(fileName)
             }
         } catch (e: IllegalArgumentException) {
             log.error(e.message)
@@ -88,13 +50,27 @@ class BootImgParser() : IPackable {
     override fun pack(fileName: String) {
         if (3 == probeHeaderVersion(fileName)) {
             val bootV3 = ObjectMapper().readValue(File("build/unzip_boot/bootimg.json"), BootV3::class.java)
-            Packer().packV3(mkbootfsBin = "./aosp/mkbootfs/build/exe/mkbootfs/mkbootfs")
-            Signer.signAVB(fileName, avbtool = "aosp/avb/avbtool", imageSize = bootV3.info.imageSize)
+            BootV3.pack()
+            Signer.signAVB(fileName, bootV3.info.imageSize)
             return
         }
 
-        Packer().packV2(mkbootfsBin = "./aosp/mkbootfs/build/exe/mkbootfs/mkbootfs")
-        Signer.sign(avbtool = "aosp/avb/avbtool", bootSigner = "aosp/boot_signer/build/libs/boot_signer.jar")
+        BootV2.pack()
+        val info2 = UnifiedConfig.readBack2()
+        val cfg = ObjectMapper().readValue(File(ParamConfig().cfg), UnifiedConfig::class.java)
+        when (info2.signatureType) {
+            BootImgInfo.VerifyType.VERIFY -> {
+                Signer.signVB1(cfg.info.output + ".clear", cfg.info.output + ".signed")
+            }
+            BootImgInfo.VerifyType.AVB -> {
+                log.info("Adding hash_footer with verified-boot 2.0 style")
+                Signer.signAVB(cfg.info.output, info2.imageSize)
+                updateVbmeta(fileName)
+            }
+        }
+    }
+
+    private fun updateVbmeta(fileName: String) {
         if (File("vbmeta.img").exists()) {
             val partitionName = ObjectMapper().readValue(File(Avb.getJsonFileName(fileName)), AVBInfo::class.java).let {
                 it.auxBlob!!.hashDescriptors.get(0).partition_name

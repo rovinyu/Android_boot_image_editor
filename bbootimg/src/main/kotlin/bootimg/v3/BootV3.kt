@@ -2,14 +2,21 @@ package cfig.bootimg.v3
 
 import cfig.Avb
 import cfig.Helper
-import cfig.ParamConfig
-import cfig.Parser
+import cfig.bootimg.v2.ParamConfig
+import cfig.bootimg.Common
+import cfig.bootimg.Common.Companion.deleleIfExists
 import cfig.bootimg.Common.Companion.getPaddingSize
+import cfig.bootimg.Common.Companion.parseKernelInfo
 import cfig.bootimg.Common.Companion.unpackRamdisk
+import com.fasterxml.jackson.databind.ObjectMapper
 import org.apache.commons.exec.CommandLine
+import org.apache.commons.exec.DefaultExecutor
 import org.slf4j.LoggerFactory
 import java.io.File
 import java.io.FileInputStream
+import java.io.FileOutputStream
+import java.nio.ByteBuffer
+import java.nio.ByteOrder
 
 @OptIn(ExperimentalUnsignedTypes::class)
 data class BootV3(var info: MiscInfo = MiscInfo(output = "boot.img"),
@@ -18,6 +25,7 @@ data class BootV3(var info: MiscInfo = MiscInfo(output = "boot.img"),
 ) {
     companion object {
         private val log = LoggerFactory.getLogger(BootV3::class.java)
+
         fun parse(fileName: String): BootV3 {
             val ret = BootV3()
             FileInputStream(fileName).use { fis ->
@@ -39,6 +47,52 @@ data class BootV3(var info: MiscInfo = MiscInfo(output = "boot.img"),
             }
             ret.info.imageSize = File(fileName).length()
             return ret
+        }
+
+        fun pack(mkbootfsBin: String = "./aosp/mkbootfs/build/exe/mkbootfs/mkbootfs") {
+            val workDir = "build/unzip_boot/"
+            val cfgFile = workDir + "bootimg.json"
+            log.info("Loading config from $cfgFile")
+            val cfg = ObjectMapper().readValue(File(cfgFile), BootV3::class.java)
+            if (File(workDir + cfg.ramdisk.file).exists() && !File(workDir + "root").exists()) {
+                //do nothing if we have ramdisk.img.gz but no /root
+                log.warn("Use prebuilt ramdisk file: ${cfg.ramdisk.file}")
+            } else {
+                File(workDir + cfg.ramdisk.file).deleleIfExists()
+                Common.packRootfs(mkbootfsBin)
+            }
+            cfg.kernel.size = File(workDir + cfg.kernel.file).length().toInt()
+            cfg.ramdisk.size = File(workDir + cfg.ramdisk.file).length().toInt()
+
+            //header
+            FileOutputStream(cfg.info.output + ".clear", false).use { fos ->
+                val encodedHeader = cfg.toHeader().encode()
+                fos.write(encodedHeader)
+                fos.write(ByteArray((
+                        Helper.round_to_multiple(encodedHeader.size.toUInt(),
+                                cfg.info.pageSize) - encodedHeader.size.toUInt()).toInt()
+                ))
+            }
+
+            //data
+            log.info("Writing data ...")
+            val bf = ByteBuffer.allocate(1024 * 1024 * 64)//assume total SIZE small than 64MB
+            bf.order(ByteOrder.LITTLE_ENDIAN)
+            Common.writePaddedFile(bf, workDir + cfg.kernel.file, cfg.info.pageSize)
+            Common.writePaddedFile(bf, workDir + cfg.ramdisk.file, cfg.info.pageSize)
+            //write
+            FileOutputStream("${cfg.info.output}.clear", true).use { fos ->
+                fos.write(bf.array(), 0, bf.position())
+            }
+
+            //google way
+            cfg.toCommandLine().apply {
+                addArgument(cfg.info.output + ".google")
+                log.info(this.toString())
+                DefaultExecutor().execute(this)
+            }
+
+            Common.assertFileEquals(cfg.info.output + ".clear", cfg.info.output + ".google")
         }
     }
 
@@ -74,7 +128,7 @@ data class BootV3(var info: MiscInfo = MiscInfo(output = "boot.img"),
         val kernelFile = workDir + kernel.file
         Helper.extractFile(fileName, kernelFile,
                 kernel.position.toLong(), kernel.size)
-        Parser.parseKernelInfo(kernelFile)
+        parseKernelInfo(kernelFile)
 
         //ramdisk
         val ramdiskGz = workDir + ramdisk.file

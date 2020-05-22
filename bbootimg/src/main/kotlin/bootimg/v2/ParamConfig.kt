@@ -1,4 +1,4 @@
-package cfig
+package cfig.bootimg.v2
 
 @OptIn(ExperimentalUnsignedTypes::class)
 data class ParamConfig(

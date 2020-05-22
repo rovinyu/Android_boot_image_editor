@@ -2,7 +2,7 @@ package cfig.packable
 
 import cfig.Helper.Companion.check_call
 import cfig.Helper.Companion.check_output
-import cfig.UnifiedConfig
+import cfig.bootimg.v2.UnifiedConfig
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
 import java.io.File
