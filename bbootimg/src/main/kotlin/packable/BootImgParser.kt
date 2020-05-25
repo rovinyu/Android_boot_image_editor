@@ -56,7 +56,8 @@ class BootImgParser() : IPackable {
         }
 
         BootV2.pack()
-        val info2 = UnifiedConfig.readBack2()
+        val info2 = ObjectMapper().readValue(File(ParamConfig().cfg),
+                UnifiedConfig::class.java).toBootImgInfo()
         val cfg = ObjectMapper().readValue(File(ParamConfig().cfg), UnifiedConfig::class.java)
         when (info2.signatureType) {
             BootImgInfo.VerifyType.VERIFY -> {

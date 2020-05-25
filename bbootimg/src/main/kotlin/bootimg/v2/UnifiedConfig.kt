@@ -141,11 +141,5 @@ data class UnifiedConfig(
             ret.info.imageSize = info.imageSize
             return ret
         }
-
-        fun readBack2(): BootImgInfo {
-            val param = ParamConfig()
-            return ObjectMapper().readValue(File(param.cfg),
-                    UnifiedConfig::class.java).toBootImgInfo()
-        }
     }
 }
